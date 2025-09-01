@@ -1,0 +1,112 @@
+FastSimCoal (fsc) Automation Tool Documentation
+Overview
+This documentation describes two complementary scripts that automate running FastSimCoal (fsc) multiple times and selecting the best run based on maximum likelihood values.
+
+Script 1: run_fsc_4D.py
+Purpose
+A Python script that automates running fsc 100 times with the same demographic model but different random seeds.
+
+Usage
+bash
+python run_fsc_4D.py --fsc <fsc_directory> --dir <working_directory> --pre <file_prefix>
+Parameters
+--fsc or -F: Path to the directory containing the fsc executable (required)
+
+--dir or -D: Working directory where input files are located (required)
+
+--pre or -P: Prefix of the fsc input files (required)
+
+Input Files Required
+The script expects the following files in the working directory:
+
+<prefix>.tpl - Template file
+
+<prefix>.est - Estimation file
+
+Multiple joint MAF files: <prefix>_jointMAFpopX_Y.obs
+
+Functionality
+Creates 100 subdirectories (run1, run2, ..., run100)
+
+Copies all necessary input files to each subdirectory
+
+Runs fsc in each directory with specific parameters:
+
+-t - template file
+
+-e - estimation file
+
+-m -0 - use 0 migration matrix
+
+-n 100000 - number of simulations
+
+-L 30 - number of loops
+
+-s 0 - random seed
+
+-M - perform parameter estimation
+
+-c 15 - number of cores to use
+
+-B 15 - number of bootstrap replicates
+
+After completing all runs, executes the selection script
+
+Script 2: selectbestrun.sh
+Purpose
+A Bash script that identifies the best fsc run from multiple executions by comparing likelihood values.
+
+Usage
+bash
+./selectbestrun.sh <file_prefix>
+Parameters
+<file_prefix>: Prefix of the fsc input files (without .tpl extension)
+
+Functionality
+Searches through all run* directories
+
+Looks for .bestlhoods files in each run directory
+
+Compares the likelihood values from all runs
+
+Identifies the run with the highest likelihood value
+
+Copies all files from the best run to a bestrun directory
+
+Reports the number of runs analyzed and the best run found
+
+Complete Workflow
+Step 1: Prepare Input Files
+Ensure all required fsc input files are in your working directory:
+
+.tpl file
+
+.est file
+
+.obs files (multiple joint MAF files)
+
+Step 2: Make Scripts Executable
+bash
+chmod +x selectbestrun.sh
+Step 3: Run the Automation Script
+bash
+python run_fsc_4D.py --fsc /path/to/fsc/ --dir /path/to/working/directory/ --pre your_file_prefix
+Step 4: Review Results
+After completion:
+
+The best run files will be copied to bestrun/ directory
+
+Summary information will be displayed in the console
+
+Detailed logs are available in bestrun.log
+
+Notes
+The scripts assume a specific naming convention for joint MAF files
+
+The fsc version used is fsc28 (can be modified in the Python script if needed)
+
+The number of cores (-c) and bootstrap replicates (-B) are set to 15
+
+The number of runs is fixed at 100 but can be modified in the Python script
+
+Ensure you have appropriate permissions to execute scripts and create directories

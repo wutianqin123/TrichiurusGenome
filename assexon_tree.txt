@@ -1,0 +1,255 @@
+Targeted Gene Enrichment Sequencing Data Analysis Pipeline
+Pipeline Overview:
+(Raw sequencing data -> Decompression -> Adapter trimming) ->
+Assembly -> {Merging different batches -> Removing low-quality/unneeded sequences} ->
+Sequence Alignment -> Filtering -> {Removing reference/contaminant sequences -> Re-aligning} ->
+Summary Statistics -> Locus Concatenation -> Gene Tree Construction (IQ-TREE/RAxML) -> Download and visualize tree
+                                                                  -> Constructing multiple gene trees -> Coalescent-based Species Tree (ASTRAL) ->
+
+Note: Steps in () are typically handled by the sequencing provider. Steps in {} are optional.
+
+1. Assembly of Enriched Sequencing Data
+Original Tool Repository: https://github.com/yhadevol/Assexon
+
+1.1 Adapter Trimming
+View usage instructions by running the following command in any directory:
+
+bash
+trim_adaptor.pl
+Required Directory Structure (directrim):
+
+1) A folder containing demultiplexed sequencing files (each file represents all sequences from one sample).
+
+2) Text file: inlineindex.txt (contains fixed inline index sequences).
+
+3) Text file: indexpair.txt (contains IS1 and IS2 barcode pairs for this dataset, self-created).
+
+Format: {sample<TAB>IS1<TAB>IS2}
+
+4) The Perl script: trim_adaptor.pl.
+
+Execution:
+
+bash
+# Navigate to the 'directrim' directory
+cd /path/to/directrim
+
+# Run the trimming script
+perl trim_adaptor.pl --raw_reads demultiplexed --inline_index inlineindex.txt --index_pair indexpair.txt --trimmed trimmed
+
+# Alternatively, run in the background (persists after disconnection/logout)
+nohup perl trim_adaptor.pl --raw_reads demultiplexed --inline_index inlineindex.txt --index_pair indexpair.txt --trimmed trimmed > trim.log &
+
+# Check process status:
+ps -ef | grep trim_adaptor.pl
+
+# To stop the process if needed (use the PID number from the ps command):
+kill <process_id>
+Output (directrim directory):
+
+1) trimmed/: Folder containing adapter-trimmed sequences (same format as input).
+
+2) trimming_report/: Folder containing processing reports.
+
+3) trimmed_reads_bases_count.txt: Text file summarizing total number of reads and total bases after trimming. View with less or a text editor.
+
+4) trim.log: Log file.
+
+1.2 Assembly (Using Modular Scripts)
+View usage instructions:
+
+bash
+assemble.pl
+Required Directory Structure (directassem):
+
+1) The trimmed/ folder from step 1.1.
+
+2) The modular assembly script assemble.sh.
+
+Execution:
+
+bash
+# Navigate to the 'directassem' directory
+cd /path/to/directassem
+
+# Run the assembly module (preface script name with 'bash')
+bash assemble.sh
+
+# Check process status:
+ps -ef | grep assemble.sh
+Output (directassem directory):
+
+1) assemble_results/: Folder containing assembled sequences.
+
+Subfolders: f (filtered?), nf (likely non-filtered/primary output, used downstream), p (potential?).
+
+2) enriched_gene.txt: Text file listing the number of loci enriched per sample and the percentage of total reference loci captured. View with less.
+
+3) assemb.log: Log file.
+
+4) Other less critical files and folders.
+
+1.3 Post-Assembly Processing
+Merging results from multiple batches & deduplication:
+
+bash
+# 1. Create a new directory (e.g., 'sample_merge')
+mkdir sample_merge
+cd sample_merge
+
+# 2. Copy the merge script 'merge.sh' and the utility 'pick_taxa.pl' here
+
+# 3. Edit 'merge.sh' (e.g., using a text editor like vim or nano).
+#    Modify the '--indir' paths to point to the 'nf' folders from different assembly batches.
+#    Example content for merge.sh:
+#    ------------------------------------------------------
+#    #!/bin/bash
+#    merge_loci.pl \
+#        --indir "/path/to/batch1/assemble_results/nf /path/to/batch2/assemble_results/nf" \
+#        --outdir merged_nf \
+#        --min_seq 3
+#    echo "Done!!!"
+#    ------------------------------------------------------
+
+# 4. Execute the merge script
+bash merge.sh # This creates 'merged_nf/'
+
+# 5. Remove duplicate sequences resulting from the merge
+pick_taxa.pl --indir merged_nf --outdir deduplicated --rm_dup_taxa # Creates 'deduplicated/'
+Sequence Alignment:
+
+Required Directory (direcalign):
+
+deduplicated/ (or merged_nf/) folder from merging.
+
+Aligning.sh module.
+
+Edit Aligning.sh: Set --dna_unaligned to your input dir (e.g., deduplicated) and --dna_aligned to your desired output dir name (e.g., samples_nf_aligned).
+
+Execution:
+
+bash
+cd /path/to/direcalign
+nohup bash Aligning.sh > alignment.log &
+# Check status: ps -ef | grep Aligning.sh or tail -f alignment.log
+Output: Aligned sequences directory (e.g., samples_nf_aligned).
+
+Filtering Poor Alignments:
+
+Required Directory (direcfilter):
+
+Aligned sequences directory (e.g., samples_nf_aligned).
+
+filtering.sh module.
+
+Execution:
+
+bash
+cd /path/to/direcfilter
+nohup bash filtering.sh > filter.log &
+# Check status: ps -ef | grep filtering.sh
+Output: Filtered alignments directory (e.g., samples_nf_filtered).
+
+Optional: Removing Reference/Unneeded Sequences:
+
+Edit the Delete_unneeded_sequences.sh module to specify input, output, and sequence names/patterns to remove.
+
+Realign the resulting dataset (repeat the Alignment step above).
+
+Final output: Filtered and re-aligned sequences directory (e.g., samples_nf_aligned_final).
+
+Summary Statistics for Enrichment Efficiency:
+
+Required Directory (direcstatistic):
+
+Filtered alignments directory (e.g., samples_nf_filtered or samples_nf_aligned_final).
+
+statistics.sh module.
+
+Execution:
+
+bash
+cd /path/to/direcstatistic
+nohup bash statistics.sh > statistics.log &
+# Check status: ps -ef | grep statistics.sh
+Output:
+
+sample_summary.txt: Number of loci enriched and average GC content per sample.
+
+loci_summary.txt: Enrichment information per locus.
+
+2. Phylogenetic Tree Construction
+This section concatenates all aligned loci for each species into a supermatrix and builds a phylogenetic tree.
+
+2.1 Locus Concatenation
+Required Directory:
+
+Directory containing the final aligned sequences (e.g., samples_nf_aligned_final).
+
+Script: concat_loci.sh.
+
+Edit concat_loci.sh: Set the input directory (--indir) and the desired output filename prefix (--outfile).
+
+Execution:
+
+bash
+nohup bash concat_loci.sh > concat.log &
+# Check concat.log for progress
+Output: Three concatenated sequence files in different formats: .fas (FASTA), .nex (NEXUS), .phy (PHYLIP). The .phy file is often used for tree building.
+
+2.2 Partitioning by Codon Position
+Required Directory (on server):
+
+The concatenated NEXUS file from step 2.1 (e.g., concat_seq.nex).
+
+Perl script: extract_DNAblocks_iqtree.pl.
+
+Edit extract_DNAblocks_iqtree.pl: Point my $file = "filename.nex"; to your NEXUS file.
+
+Execution (on server):
+
+bash
+nohup perl extract_DNAblocks_iqtree.pl > dnabl.log &
+Output: DNA_blocks.txt (defines codon positions).
+
+Local Computer Processing:
+
+Create a folder partitionfolder on your local machine.
+
+Place the Python script transform_to_raxmlformat.py inside.
+
+Create a new, empty text file DNA_partition.txt inside.
+
+Download DNA_blocks.txt from the server to partitionfolder.
+
+Run the Python script locally:
+
+bash
+# Navigate to the folder in your local terminal/command prompt
+cd path/to/partitionfolder
+python transform_to_raxmlformat.py
+# Follow the prompts: Use 'DNA_blocks.txt' as input and 'DNA_partition.txt' as output.
+Upload the newly created DNA_partition.txt file back to the server analysis directory.
+
+2.3 Tree Inference (IQ-TREE)
+Required Directory:
+
+The concatenated PHYLIP file (concat_seq.phy).
+
+The partition file (DNA_partition.txt).
+
+Script: iqtree.sh.
+
+Edit iqtree.sh: Ensure the parameters are correct:
+
+-s concat_seq.phy (Input sequences)
+
+-spp DNA_partition.txt (Partition file)
+
+-prefix <desired_output_prefix> (e.g., MyGeneTree)
+
+Execution:
+
+bash
+nohup bash iqtree.sh > iqtree.log &
+Output: The main tree file is {prefix}.treefile (e.g., MyGeneTree.treefile). Other files include log, model information, and support values.

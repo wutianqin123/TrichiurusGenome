@@ -1,0 +1,152 @@
+Reference Protocol: Mitochondrial Genome Assembly using GetOrganelle and Subsequent Annotation
+1. Purpose and Scope
+This document outlines a standard operating procedure for the de novo assembly of animal mitochondrial (mt) genomes from whole-genome sequencing (WGS) paired-end reads using the get_organelle toolkit, followed by annotation and extraction of specific genes.
+
+2. Prerequisites & Software
+
+Operating System: Unix/Linux (e.g., Ubuntu, CentOS) or macOS.
+
+Software:
+
+GetOrganelle (v1.7.5+ recommended). Install via pip install getorganelle or from GitHub.
+
+Bowtie2 (bundled with GetOrganelle but must be in $PATH).
+
+SPAdes (bundled with GetOrganelle).
+
+Input Data: Illumina paired-end sequencing reads in FASTQ format (_R1.fq, _R2.fq).
+
+Reference Sequence: A closely related mitochondrial genome sequence (in FASTA format) downloaded from NCBI GenBank.
+
+3. Workflow Overview
+The process involves three main stages:
+
+Assembly: Using get_organelle_from_reads.py to assemble the mitochondrial genome for each sample.
+
+Annotation: Uploading the assembled genome to the MITOS2 web server for structural annotation.
+
+Gene Extraction: Using MEGA software to visually inspect the annotation and extract the nucleotide sequence of the target gene (e.g., COX1).
+
+4. Detailed Methodology
+4.1. Obtaining a Reference Sequence
+Navigate to the NCBI Nucleotide database (https://www.ncbi.nlm.nih.gov/nucleotide).
+
+Search for the mitochondrial genome of a species phylogenetically closest to your sample(s).
+
+Download the complete sequence in FASTA format.
+
+Note the file path for use in the assembly script (e.g., /path/to/reference_mt.fasta).
+
+4.2. Automated Assembly Script
+The provided Bash script automates the assembly process for multiple samples.
+
+4.2.1. Script Explanation (assembly_script.sh)
+
+bash
+#!/bin/bash
+
+# Define directory variables
+input_dir="/path/to/trimmed/reads/" # Directory containing input FASTQ files
+output_dir="/path/to/assembly/output/" # Directory for assembly results
+reference_path="/path/to/reference_mt.fasta" # Path to the NCBI reference FASTA
+
+# Create the output directory if it doesn't exist
+mkdir -p "$output_dir"
+
+# Loop through all _R1.fq files in the input directory
+for r1_file in "$input_dir"*_R1.fq; do
+    # Extract the sample base name (assumes naming convention: 'sample_R1.fq')
+    sample_name=$(basename "$r1_file" _R1.fq)
+    
+    # Construct the path to the corresponding reverse read file
+    r2_file="$input_dir${sample_name}_R2.fq"
+    
+    # Check if the reverse read file exists before proceeding
+    if [[ -f "$r2_file" ]]; then
+        # Define a unique output directory for each sample
+        output_sample_dir="$output_dir${sample_name}_out"
+        
+        # Execute the GetOrganelle command
+        get_organelle_from_reads.py \
+          -1 "$r1_file" \          # Forward reads
+          -2 "$r2_file" \          # Reverse reads
+          -R 10 \                  # Initial seed extension rounds
+          -s "$reference_path" \   # Reference sequence for seed generation
+          -k 21,45,65,85,105 \     # K-mer sizes for assembly graph
+          -F animal_mt \           # Target genome type (animal mitochondrial)
+          -o "$output_sample_dir" \ # Output directory
+          -t 5 &                   # Number of threads; '&' runs jobs in background
+    else
+        echo "Error: Reverse reads $r2_file not found for $sample_name"
+    fi
+done
+
+# Wait for all background processes to finish
+wait
+echo "All assembly jobs are complete."
+4.2.2. Key Parameters:
+
+-1, -2: Paths to forward and reverse read files.
+
+-s: Path to the reference sequence. This is used to "bait" and recruit mitochondrial reads.
+
+-F animal_mt: Specifies the target is an animal mitochondrial genome, optimizing the assembly strategy.
+
+-k: A list of k-mer sizes. Using multiple k-mers improves the ability to resolve repeats and assemble complete circles.
+
+-t: Number of CPU threads to use per sample.
+
+&: The ampersand runs each sample's assembly as a background job, processing all samples in parallel. The final wait command ensures the script doesn't exit until all jobs finish.
+
+4.2.3. Execution:
+
+Save the script as run_assembly.sh.
+
+Modify the input_dir, output_dir, and reference_path variables to match your system's paths.
+
+Make the script executable: chmod +x run_assembly.sh.
+
+Run the script: ./run_assembly.sh.
+
+4.2.4. Output:
+For each sample, a directory (${sample_name}_out) is created. The final assembly is typically found in the *.fasta file within this directory (e.g., sample1_out/extended_K105.complete.graph1.1.fasta). The *.fastg file contains the assembly graph for visualization in Bandage.
+
+4.3. Annotation using MITOS2 Web Server
+Access the MITOS2 Web Server: http://mitos2.bioinf.uni-leipzig.de/index.py.
+
+Submit Assembly: Upload your assembled FASTA file.
+
+Select Parameters:
+
+Genetic Code: Select the appropriate code (e.g., 5: Invertebrate Mitochondrial or 2: Vertebrate Mitochondrial).
+
+Reference: RefSeq 89 Metazoa (or latest available).
+
+Keep other parameters at their default settings.
+
+Run Annotation: Submit the job. You will receive results via email.
+
+4.4. Gene Extraction using MEGA
+Open MEGA software on your local computer.
+
+Open Annotated Sequence: Load the FASTA file of your assembled and MITOS2-annotated genome.
+
+View Annotation: Navigate to the Display menu to view the annotated features (genes, tRNAs, etc.).
+
+Extract COX1:
+
+Locate the COX1 (Cytochrome c oxidase subunit 1) gene in the feature table or graphical view.
+
+Select the sequence corresponding to the COX1 gene.
+
+Use MEGA's export or copy function to extract the selected nucleotide sequence into a new FASTA file. This file can now be used for downstream phylogenetic analysis or BLAST searches.
+
+5. Notes and Troubleshooting
+
+Reference Choice: The quality and phylogenetic proximity of the reference sequence are critical for successful seed-based assembly.
+
+Read Depth: Low coverage of mitochondrial reads may result in incomplete assemblies.
+
+Contamination: If the assembly is poor, the sample may have contamination from other species. Consider using --reduce-reads for large datasets or pre-filtering reads with bowtie2 against the reference.
+
+Complexity: For genomes with long repeats, the assembly graph (*.fastg) should be visualized using Bandage to manually check for circularity and potential alternative assemblies.

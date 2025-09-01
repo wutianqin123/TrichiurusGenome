@@ -1,0 +1,18 @@
+//Search ranges and rules file
+//****************************
+
+[PARAMETERS]
+//#isInt?	#name	#dist.	#min		#max
+//all Ns	are in number of haploid individuals
+1	NPOP0$	unif	2000	500000	output
+1	NPOP1$	unif	2000	500000	output
+1	NPOP2$	unif    2000	500000  output
+1	NPOP3$	unif    2000	500000  output
+1	TSP$	unif	0	1000000	output
+1	TSP1$	unif	TSP$	1000000	output	paramInRange
+1	TSP2$	unif	TSP1$	2000000	output	paramInRange
+0	M01$	logunif	1e-5	1e-2	output
+0	M02$	logunif	1e-5	1e-2    output
+0	M10$	logunif	1e-5	1e-2    output
+0	M20$	logunif	1e-5	1e-2    output
+[COMPLEX PARAMETERS]

@@ -1,0 +1,178 @@
+Reference Protocol: Population Genetic Analysis Pipeline from Variant Calls
+1. Purpose and Scope
+This document outlines a standardized bioinformatics pipeline for performing population genetic analysis starting from a VCF file containing variant calls from multiple individuals. The pipeline includes quality control filtering, principal component analysis (PCA), and population structure inference using ADMIXTURE. Results are visualized using R and TBtools.
+
+2. Prerequisites & Software
+
+Input Data: A VCF file generated from a variant caller (e.g., GATK).
+
+Software:
+
+VCFtools (v0.1.16+)
+
+PLINK (v1.90+)
+
+ADMIXTURE (v1.3.0+)
+
+R (v4.0+) with packages ggplot2 and readr
+
+TBtools (for visualizing ADMIXTURE results)
+
+3. Detailed Workflow
+3.1. Quality Control Filtering with VCFtools
+This step removes low-quality variants to reduce noise and potential errors in downstream analyses.
+
+Command:
+
+bash
+vcftools --vcf input.vcf \
+         --maf 0.01 \
+         --hwe 1e-6 \
+         --max-missing 0.8 \
+         --recode \
+         --recode-INFO-all \
+         --out filtered_maf001_hwe1e6_miss08
+Parameter Explanation:
+
+--vcf input.vcf: Specifies the input VCF file.
+
+--maf 0.01: Retains only variants with a Minor Allele Frequency (MAF) greater than or equal to 1%. This removes very rare variants.
+
+--hwe 1e-6: Filters out variants that significantly deviate from Hardy-Weinberg Equilibrium (HWE) at a p-value threshold of 10⁻⁶. This helps remove genotyping errors.
+
+--max-missing 0.8: Retains only variants that are called in at least 80% of individuals (--max-missing 0.8 means a maximum of 20% missing data is allowed).
+
+--recode: Creates a new VCF file after applying the filters.
+
+--recode-INFO-all: Preserves all INFO fields from the original VCF in the output file.
+
+--out filtered_maf001_hwe1e6_miss08: Defines the prefix for the output files.
+
+Output:
+
+filtered_maf001_hwe1e6_miss08.recode.vcf: The filtered VCF file.
+
+3.2. Data Conversion and PCA with PLINK
+PLINK is used to convert the VCF into its binary format (for efficiency) and to perform Principal Component Analysis (PCA).
+
+Step 2.1: Convert VCF to PLINK's binary format (BED/BIM/FAM)
+
+bash
+plink --vcf filtered_maf001_hwe1e6_miss08.recode.vcf \
+      --make-bed \
+      --out filtered_plink
+Step 2.2: Perform PCA on the genotype data
+This command generates the covariance matrix and calculates the eigenvectors.
+
+bash
+plink --bfile filtered_plink \
+      --pca 15 header \
+      --out filtered_pca
+--bfile filtered_plink: Uses the binary PLINK files as input.
+
+--pca 15 header: Calculates the first 15 principal components and includes a header in the output file. The number 15 is often chosen to capture most population structure, with the first 2-3 typically being the most important for visualization.
+
+--out filtered_pca: Defines the output prefix.
+
+Output:
+
+filtered_pca.eigenval: The eigenvalues for each principal component, indicating their relative importance.
+
+filtered_pca.eigenvec: The eigenvectors (the PCA coordinates) for each individual.
+
+3.3. Visualizing PCA Results in R
+The provided R script (PCA.R) creates a publication-quality PCA plot using the ggplot2 package.
+
+R Script (PCA.R):
+
+r
+# Load required library
+library(ggplot2)
+
+# 1. Read in the data
+# Read the eigenvec file (PCA coordinates for individuals)
+pca_data <- read.table("filtered_pca.eigenvec", header = TRUE)
+# Read the eigenval file (variance explained by each PC)
+eigenvals <- read.table("filtered_pca.eigenval", header = FALSE)
+
+# 2. (CRITICAL) Add a 'group' column to pca_data.
+# This must be done manually based on your knowledge of the samples.
+# The 'group' column should define the population or group each sample belongs to.
+# Example: pca_data$group <- c("Pop1", "Pop1", "Pop2", "Pop2", ...)
+# Read pre-defined groups from a CSV file (recommended).
+# The CSV should have two columns: FID/IID and group.
+groups <- read.csv("sample_groups.csv", header = TRUE)
+pca_data <- merge(pca_data, groups, by = c("FID", "IID")) # Merge group info
+
+# 3. Calculate percentage of variance explained by each PC
+total_variance <- sum(eigenvals$V1)
+variance_prop <- (eigenvals$V1 / total_variance) * 100
+
+# 4. Create axis labels with the variance percentage
+x_label <- paste0("PC1 (", round(variance_prop[1], 2), "%)")
+y_label <- paste0("PC2 (", round(variance_prop[2], 2), "%)")
+
+# 5. Generate the PCA plot
+ggplot(pca_data, aes(x = PC1, y = PC2, color = group)) +
+  geom_point(size = 3) +                 # Scatter plot points
+  theme_bw() +                           # Use a clean black-and-white theme
+  theme(panel.grid = element_blank()) +  # Remove grid lines
+  labs(x = x_label, y = y_label) +       # Add informative axis labels
+  stat_ellipse(level = 0.95, linetype = 2) + # Add 95% confidence ellipses
+  scale_color_manual(values = c("#FF9900", "#68cc99", "#EF566B", "#3E91D2")) # Custom colors
+Execution:
+Run the script in RStudio or from the command line:
+
+bash
+Rscript PCA.R
+Output: A PDF or on-screen plot showing the first two principal components, with samples colored by their pre-defined group and surrounded by confidence ellipses.
+
+3.4. Population Structure Analysis with ADMIXTURE
+ADMIXTURE estimates ancestry proportions assuming K hypothetical ancestral populations.
+
+Step 4.1: Convert PLINK files to a format suitable for ADMIXTURE
+ADMIXTURE requires the .bed file but also needs the corresponding .fam and .bim files in the same directory.
+
+Step 4.2: Run ADMIXTURE for different values of K
+Run ADMIXTURE in cross-validation mode to estimate the quality of the fit for each K.
+
+bash
+# Run for K=3, K=4, and K=5
+for K in 3 4 5; do
+    admixture --cv filtered_plink.bed $K | tee log${K}.out
+done
+--cv: Performs 5-fold cross-validation. The CV error is printed at the end of the log file and helps choose the best K (lower is generally better).
+
+filtered_plink.bed: The input genotype file in PLINK binary format.
+
+$K: The number of assumed ancestral populations.
+
+tee log${K}.out: Saves the output to a log file for later inspection.
+
+Output for each K:
+
+filtered_plink.${K}.Q: The estimated ancestry proportions for each individual. This is the key file for visualization.
+
+filtered_plink.${K}.P: The estimated allele frequencies in the ancestral populations.
+
+log${K}.out: The log file containing the cross-validation error.
+
+Step 4.3: Visualize ADMIXTURE results in TBtools
+
+Prepare the .Q file (e.g., filtered_plink.3.Q, filtered_plink.4.Q) and a file listing the sample names in the same order as the .Q file (this can be extracted from the .fam file: cut -f1,2 -d' ' filtered_plink.fam > sample_list.txt).
+
+Open TBtools.
+
+Navigate to the visualization utilities.
+
+Use the appropriate function (often called "ADMIXTURE Plot" or "Stacked Bar Chart Plot") to load the .Q file and the sample list.
+
+Customize the plot (colors, sample order, labels) and export the figure.
+
+4. Interpretation of Results
+
+PCA: Clustering of samples along PC1 and PC2 indicates genetic similarity. Distinct clusters often represent different populations. Outliers can indicate admixed individuals or sample contamination.
+
+ADMIXTURE: Each vertical bar represents an individual. The proportion of colors in each bar represents the estimated proportion of ancestry from K ancestral populations. The value of K with the lowest cross-validation error is often considered the most likely, but biological interpretation is also crucial.
+
+Integration: Results from PCA and ADMIXTURE should be consistent and provide complementary views of the population structure within your samples.
