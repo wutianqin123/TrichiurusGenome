@@ -1,6 +1,5 @@
 # TrichiurusGenome
 The script commands and usage methods that appear in the article "Chromosome-level Genome Assembly Resolves Taxonomic Conflicts in Trichiurus and Informs Its Conservation Strategy in the Northwest Pacific" are stored in this document.
-———————————————————————————————————
 # Chromosome-Level Genome Assembly Using Docker
 
 1. Basic Commands
@@ -258,7 +257,7 @@ The file aligned/merged_nodups.txt is the main output needed for the next step.
 $ nohup /home/software/3d-dna-master/run-asm-pipeline.sh -r 3 reference/genome.fa aligned/merged_nodups.txt &> 3d.log &
 
 This will generate chromosome-scale scaffolds.
-————————————————————————————————————————————————————————————————————
+
 # Genome Annotation Workflow using MAKER (with Docker)
 This document outlines the steps for de novo genome annotation using the MAKER pipeline, including preparatory steps for repeat masking and transcriptome assembly, all within Docker containers for reproducibility.
 
@@ -455,7 +454,6 @@ gffread /data/run3/final_annotation_filtered.gff -g genome.fa -x final_annotatio
 
 bash
 /home/software/interproscan/interproscan.sh -i final_annotation.pep -iprlookup -goterms -cpu 20 -t p -f tsv -o final_annotation_interpro.tsv
-——————————————————————————————————————————————————————————
 # Population Genetic Analysis Pipeline from Variant Calls
 1. Purpose and Scope
 This document outlines a standardized bioinformatics pipeline for performing population genetic analysis starting from a VCF file containing variant calls from multiple individuals. The pipeline includes quality control filtering, principal component analysis (PCA), and population structure inference using ADMIXTURE. Results are visualized using R and TBtools.
@@ -628,7 +626,6 @@ PCA: Clustering of samples along PC1 and PC2 indicates genetic similarity. Disti
 ADMIXTURE: Each vertical bar represents an individual. The proportion of colors in each bar represents the estimated proportion of ancestry from K ancestral populations. The value of K with the lowest cross-validation error is often considered the most likely, but biological interpretation is also crucial.
 
 Integration: Results from PCA and ADMIXTURE should be consistent and provide complementary views of the population structure within your samples.
-———————————————————————————————————————————————————————————————————————————
 # Targeted Gene Enrichment Sequencing Data Analysis Pipeline
 Pipeline Overview:
 (Raw sequencing data -> Decompression -> Adapter trimming) ->
@@ -872,7 +869,6 @@ Execution:
 bash
 nohup bash iqtree.sh > iqtree.log &
 Output: The main tree file is {prefix}.treefile (e.g., MyGeneTree.treefile). Other files include log, model information, and support values.
-—————————————————————————————————————————————————————————————
 # Mitochondrial Genome Assembly using GetOrganelle and Subsequent Annotation
 1. Purpose and Scope
 This document outlines a standard operating procedure for the de novo assembly of animal mitochondrial (mt) genomes from whole-genome sequencing (WGS) paired-end reads using the get_organelle toolkit, followed by annotation and extraction of specific genes.
@@ -1257,7 +1253,7 @@ The number of cores (-c) and bootstrap replicates (-B) are set to 15
 The number of runs is fixed at 100 but can be modified in the Python script
 
 Ensure you have appropriate permissions to execute scripts and create directories
-———————————————————————————————————————————————————————————————=
+
 # Population Genetic Analysis Pipeline: Fst, Dxy, and Pi using pixy and CMplot
 1. Overview
 This pipeline calculates key population genetics statistics—Fst (genetic differentiation), Dxy (absolute genetic divergence), and Pi (nucleotide diversity)—from a VCF file using the pixy software. The raw output from pixy is then processed by custom Python scripts to clean, split, and format the data, preparing it for final visualization using the CMplot package in R to generate Manhattan-style plots.
