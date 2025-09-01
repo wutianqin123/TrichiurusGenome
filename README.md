@@ -1,7 +1,7 @@
 # TrichiurusGenome
 The script commands and usage methods that appear in the article "Chromosome-level Genome Assembly Resolves Taxonomic Conflicts in Trichiurus and Informs Its Conservation Strategy in the Northwest Pacific" are stored in this document.
-——————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-Chromosome-Level Genome Assembly Using Docker
+———————————————————————————————————
+# Chromosome-Level Genome Assembly Using Docker
 
 1. Basic Commands
 
@@ -258,8 +258,8 @@ The file aligned/merged_nodups.txt is the main output needed for the next step.
 $ nohup /home/software/3d-dna-master/run-asm-pipeline.sh -r 3 reference/genome.fa aligned/merged_nodups.txt &> 3d.log &
 
 This will generate chromosome-scale scaffolds.
-————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————-
-Genome Annotation Workflow using MAKER (with Docker)
+————————————————————————————————————————————————————————————————————
+# Genome Annotation Workflow using MAKER (with Docker)
 This document outlines the steps for de novo genome annotation using the MAKER pipeline, including preparatory steps for repeat masking and transcriptome assembly, all within Docker containers for reproducibility.
 
 Prerequisites before running MAKER
@@ -280,61 +280,45 @@ This step is performed in a dedicated Docker container.
 2.0 Container Setup and Data Transfer
 
 bash
-# a. Create a container named 'your_name_rep' from the 'repeat:v1' image
+
 docker run --name your_name_rep -idt repeat:v1 /bin/bash
 
-# b. Copy your genome assembly into the container's /data directory
 docker cp /path/to/your/genome.fa your_name_rep:/data/
 
-# c. Enter the container
 docker exec -it your_name_rep /bin/bash
-# All following commands (2.1, 2.2) are run INSIDE this container
 2.1 De Novo Repeat Library Construction
 
 bash
-# Navigate to the data directory (if not already there)
 cd /data
 
-# Build a database for RepeatModeler
 BuildDatabase -name your_genome_db -engine ncbi genome.fa
 
-# Run RepeatModeler to identify repeats (-pa: number of parallel processes)
 RepeatModeler -pa 4 -database your_genome_db -engine ncbi -LTRStruct
 
-# (Optional) Mask the genome using the newly found repeats
-# RepeatMasker -e ncbi -pa 20 -lib RM_*/consensi.fa.classified -dir . genome.fa
 The primary output file is RM_.../consensi.fa.classified.
 
 2.2 (Optional) Filtering the Repeat Library
 This step removes repeats that might be real genes by blasting them against the protein database.
 
 bash
-# Make sure your protein.fasta is also in /data (e.g., copied via docker cp)
 
-# Create a BLAST database from your protein.fasta
 makeblastdb -dbtype prot -in protein.fasta -out protein_db
 
-# BLAST the repeats against the protein database
 blastx -query RM_*/consensi.fa.classified -db protein_db -outfmt 6 -evalue 1e-5 -num_threads 20 -out repeats_vs_protein.blast
 
-# Filter the repeat library: removes repeats with significant hits to proteins
 python /path/to/Del_seq_in_blast.py -q RM_*/consensi.fa.classified -blast repeats_vs_protein.blast -l 30 -o filtered_repDB
 The final repeat library is either the original consensi.fa.classified or the filtered filtered_repDB_accept.fa.
 
 2.3 Extract Data and Clean Up Container
 
 bash
-# While still inside the container, find the full path to your final repeat library
-realpath filtered_repDB_accept.fa  # or consensi.fa.classified
-# Example output: /data/filtered_repeats.fa
 
-# Exit the container
+realpath filtered_repDB_accept.fa  # or consensi.fa.classified
+
 exit
 
-# Now on the host machine, copy the final repeat library out
 docker cp your_name_rep:/data/filtered_repeats.fa /path/on/your/host/
 
-# Stop and remove the container
 docker stop your_name_rep
 docker rm your_name_rep
 MAKER Run Preparation
@@ -342,11 +326,9 @@ a. Create MAKER Container
 
 bash
 docker run --name your_name_maker -idt maker_image:tag /bin/bash
-# Replace 'maker_image:tag' with the actual name of your MAKER Docker image
 b. Copy All Necessary Data into the Container
 
 bash
-# Copy genome, protein DB, repeat DB, and RNA-Seq reads
 docker cp /host/path/to/genome.fa your_name_maker:/data/
 docker cp /host/path/to/protein.fasta your_name_maker:/data/
 docker cp /host/path/to/filtered_repeats.fa your_name_maker:/data/ # From step 2.3
@@ -363,23 +345,18 @@ NOTE: All subsequent operations are performed INSIDE the your_name_maker contain
 Perform this for each RNA-Seq sample/library, in separate directories if multiple exist.
 
 bash
-# Index the genome for read alignment
 bwa index genome.fa
 
-# Align RNA-Seq reads to the genome and sort the BAM file
 bwa mem -t 15 genome.fa sample1_R1.fq sample1_R2.fq | samtools sort -@ 10 -m 4G -O bam -o sample1.sorted.bam -
 
-# Assemble transcripts using the genome-guided approach
 Trinity --genome_guided_bam sample1.sorted.bam --max_memory 50G --genome_guided_max_intron 10000 --CPU 6
 The main assembly output is trinity_out_dir/Trinity-GG.fasta.
 
 3.2 Deduplication of Assembled Transcripts
 
 bash
-# If you have multiple assemblies, concatenate them first
 cat trinity_out_dir1/Trinity-GG.fasta trinity_out_dir2/Trinity-GG.fasta > all_trinity_assembled.fasta
 
-# Use CD-HIT-EST to cluster transcripts at 95% identity
 cd-hit-est -i all_trinity_assembled.fasta -o all_trinity_95.fasta -c 0.95 -n 10 -d 0 -M 32000 -T 20
 The final EST evidence file for MAKER is all_trinity_95.fasta.
 
@@ -390,7 +367,6 @@ The MAKER pipeline is run iteratively to improve annotation quality.
 4.1 Configure MAKER
 
 bash
-# Use the control script to generate configuration files
 python /home/tools/MAKER_ctl_create.py -run_type 1 -g genome.fa -pep protein.fasta -est all_trinity_95.fasta -rep filtered_repeats.fa -augustus_species zebrafish
 -augustus_species: Critical parameter. Use a species from the Augustus library that is phylogenetically close to your target species.
 
@@ -411,7 +387,6 @@ This parameter should be changed consistently in maker_opts.ctl for Run 2 and Ru
 4.2 Execute MAKER Run 1
 
 bash
-# Run MAKER using the generated control file. Adjust paths for -o (output) and -opt (ctl file directory).
 nohup python3 /home/tools/MAKER_multrun.py -g genome.fa -o /data/run1 -opt /data/ -p 30 1> /data/run1/maker_run1.log 2>&1 &
 The main output GFF file is /data/run1/all.gff. This is used for training in the next step.
 
@@ -423,17 +398,13 @@ Uses the GFF from Run 1 (all.gff) to get genomic sequences around predicted gene
 
 bash
 samtools faidx genome.fa # Ensure index exists
-# Extract regions around mRNA features, extending 1000bp upstream/downstream
 awk -v OFS="\t" '{ if ($3 == "mRNA") print $1, $4, $5 }' /data/run1/all.gff | awk -v OFS="\t" '{ if ($2 < 1000) print $1, "0", $3+1000; else print $1, $2-1000, $3+1000 }' | bedtools getfasta -fi genome.fa -bed - -fo augustus_training_data.fa
 5.1.2 Train Augustus using BUSCO
 
 bash
-# Run BUSCO in genome mode on the training sequences to optimize Augustus parameters
 nohup /home/software/busco/bin/busco -i augustus_training_data.fa -o target_species_busco -l /home/software/busco/odb10/actinopterygii_odb10/ -m genome -c 20 --long --augustus_species zebrafish --augustus_parameters='--progress=true' 1> busco.log 2>&1 &
 
-# Copy the newly created species profile to Augustus's config directory
 cp -r target_species_busco/run_/augustus_output/retraining_parameters/BUSCO_target_species_busco $AUGUSTUS_CONFIG_PATH/species/
-# The new species name for MAKER is 'BUSCO_target_species_busco'
 -l: Choose the appropriate BUSCO database lineage (actinopterygii_odb10, diptera_odb10, insecta_odb10, vertebrata_odb10).
 
 5.2 Train SNAP
@@ -453,9 +424,7 @@ The final SNAP HMM model is snap/genome.hmm.
 5.3 Configure MAKER for Run 2
 
 bash
-# Configure for the second run, providing the new models and the previous annotation
 python /home/tools/MAKER_ctl_create.py -run_type 2 -g genome.fa -reanno_gff /data/run1/all.gff -augustus_new BUSCO_target_species_busco -snap_hmm /data/snap/genome.hmm
-# Note: '-augustus_new' takes the name, not the path. '-snap_hmm' takes the full path.
 5.4 Execute MAKER Run 2
 
 bash
@@ -466,7 +435,6 @@ The output GFF file is /data/run2/all.gff.
 6.1 Configure MAKER for Run 3
 
 bash
-# Final run uses all evidence and the trained ab initio predictors
 python /home/tools/MAKER_ctl_create.py -run_type 3 -g genome.fa -reanno_gff /data/run2/all.gff -augustus_new BUSCO_target_species_busco -snap_hmm /data/snap/genome.hmm -pep protein.fasta -est all_trinity_95.fasta -rep filtered_repeats.fa
 6.2 Execute MAKER Run 3
 
@@ -478,21 +446,17 @@ Post-MAKER Processing
 6.3 Filtering the Final GFF
 
 bash
-# Use a script to clean the MAKER GFF file (e.g., remove non-gene features, select best models)
 python3 /home/tools/gff_filter_fromMAKER.py -i /data/run3/all.gff -o /data/run3/final_annotation_filtered.gff
 6.4 Extract Sequences
 
 bash
-# Use gffread to extract CDS and protein sequences from the filtered GFF
 gffread /data/run3/final_annotation_filtered.gff -g genome.fa -x final_annotation.cds -y final_annotation.pep
 6.5 Functional Annotation with InterProScan
 
 bash
-# Annotate the predicted protein sequences
-# Ensure InterProScan is initialized first if it's a new installation
 /home/software/interproscan/interproscan.sh -i final_annotation.pep -iprlookup -goterms -cpu 20 -t p -f tsv -o final_annotation_interpro.tsv
-——————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-Reference Protocol: Population Genetic Analysis Pipeline from Variant Calls
+——————————————————————————————————————————————————————————
+# Population Genetic Analysis Pipeline from Variant Calls
 1. Purpose and Scope
 This document outlines a standardized bioinformatics pipeline for performing population genetic analysis starting from a VCF file containing variant calls from multiple individuals. The pipeline includes quality control filtering, principal component analysis (PCA), and population structure inference using ADMIXTURE. Results are visualized using R and TBtools.
 
@@ -580,33 +544,28 @@ The provided R script (PCA.R) creates a publication-quality PCA plot using the g
 R Script (PCA.R):
 
 r
-# Load required library
+
 library(ggplot2)
 
-# 1. Read in the data
-# Read the eigenvec file (PCA coordinates for individuals)
+ 1. Read in the data
 pca_data <- read.table("filtered_pca.eigenvec", header = TRUE)
-# Read the eigenval file (variance explained by each PC)
+
 eigenvals <- read.table("filtered_pca.eigenval", header = FALSE)
 
-# 2. (CRITICAL) Add a 'group' column to pca_data.
-# This must be done manually based on your knowledge of the samples.
-# The 'group' column should define the population or group each sample belongs to.
-# Example: pca_data$group <- c("Pop1", "Pop1", "Pop2", "Pop2", ...)
-# Read pre-defined groups from a CSV file (recommended).
-# The CSV should have two columns: FID/IID and group.
+ 2. (CRITICAL) Add a 'group' column to pca_data.
+
 groups <- read.csv("sample_groups.csv", header = TRUE)
 pca_data <- merge(pca_data, groups, by = c("FID", "IID")) # Merge group info
 
-# 3. Calculate percentage of variance explained by each PC
+ 3. Calculate percentage of variance explained by each PC
 total_variance <- sum(eigenvals$V1)
 variance_prop <- (eigenvals$V1 / total_variance) * 100
 
-# 4. Create axis labels with the variance percentage
+ 4. Create axis labels with the variance percentage
 x_label <- paste0("PC1 (", round(variance_prop[1], 2), "%)")
 y_label <- paste0("PC2 (", round(variance_prop[2], 2), "%)")
 
-# 5. Generate the PCA plot
+ 5. Generate the PCA plot
 ggplot(pca_data, aes(x = PC1, y = PC2, color = group)) +
   geom_point(size = 3) +                 # Scatter plot points
   theme_bw() +                           # Use a clean black-and-white theme
@@ -631,7 +590,6 @@ Step 4.2: Run ADMIXTURE for different values of K
 Run ADMIXTURE in cross-validation mode to estimate the quality of the fit for each K.
 
 bash
-# Run for K=3, K=4, and K=5
 for K in 3 4 5; do
     admixture --cv filtered_plink.bed $K | tee log${K}.out
 done
@@ -670,8 +628,8 @@ PCA: Clustering of samples along PC1 and PC2 indicates genetic similarity. Disti
 ADMIXTURE: Each vertical bar represents an individual. The proportion of colors in each bar represents the estimated proportion of ancestry from K ancestral populations. The value of K with the lowest cross-validation error is often considered the most likely, but biological interpretation is also crucial.
 
 Integration: Results from PCA and ADMIXTURE should be consistent and provide complementary views of the population structure within your samples.
-——————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-Targeted Gene Enrichment Sequencing Data Analysis Pipeline
+———————————————————————————————————————————————————————————————————————————
+# Targeted Gene Enrichment Sequencing Data Analysis Pipeline
 Pipeline Overview:
 (Raw sequencing data -> Decompression -> Adapter trimming) ->
 Assembly -> {Merging different batches -> Removing low-quality/unneeded sequences} ->
@@ -704,19 +662,14 @@ Format: {sample<TAB>IS1<TAB>IS2}
 Execution:
 
 bash
-# Navigate to the 'directrim' directory
 cd /path/to/directrim
 
-# Run the trimming script
 perl trim_adaptor.pl --raw_reads demultiplexed --inline_index inlineindex.txt --index_pair indexpair.txt --trimmed trimmed
 
-# Alternatively, run in the background (persists after disconnection/logout)
 nohup perl trim_adaptor.pl --raw_reads demultiplexed --inline_index inlineindex.txt --index_pair indexpair.txt --trimmed trimmed > trim.log &
 
-# Check process status:
 ps -ef | grep trim_adaptor.pl
 
-# To stop the process if needed (use the PID number from the ps command):
 kill <process_id>
 Output (directrim directory):
 
@@ -742,13 +695,10 @@ Required Directory Structure (directassem):
 Execution:
 
 bash
-# Navigate to the 'directassem' directory
 cd /path/to/directassem
 
-# Run the assembly module (preface script name with 'bash')
 bash assemble.sh
 
-# Check process status:
 ps -ef | grep assemble.sh
 Output (directassem directory):
 
@@ -766,28 +716,24 @@ Subfolders: f (filtered?), nf (likely non-filtered/primary output, used downstre
 Merging results from multiple batches & deduplication:
 
 bash
-# 1. Create a new directory (e.g., 'sample_merge')
 mkdir sample_merge
 cd sample_merge
 
-# 2. Copy the merge script 'merge.sh' and the utility 'pick_taxa.pl' here
 
-# 3. Edit 'merge.sh' (e.g., using a text editor like vim or nano).
-#    Modify the '--indir' paths to point to the 'nf' folders from different assembly batches.
-#    Example content for merge.sh:
-#    ------------------------------------------------------
-#    #!/bin/bash
-#    merge_loci.pl \
-#        --indir "/path/to/batch1/assemble_results/nf /path/to/batch2/assemble_results/nf" \
-#        --outdir merged_nf \
-#        --min_seq 3
-#    echo "Done!!!"
-#    ------------------------------------------------------
+3. Edit 'merge.sh' (e.g., using a text editor like vim or nano). Modify the '--indir' paths to point to the 'nf' folders from different assembly batches. Example content for merge.sh:
+    ------------------------------------------------------
+!/bin/bash
+    merge_loci.pl \
+        --indir "/path/to/batch1/assemble_results/nf /path/to/batch2/assemble_results/nf" \
+        --outdir merged_nf \
+        --min_seq 3
+    echo "Done!!!"
+    ------------------------------------------------------
 
-# 4. Execute the merge script
+ 4. Execute the merge script
 bash merge.sh # This creates 'merged_nf/'
 
-# 5. Remove duplicate sequences resulting from the merge
+ 5. Remove duplicate sequences resulting from the merge
 pick_taxa.pl --indir merged_nf --outdir deduplicated --rm_dup_taxa # Creates 'deduplicated/'
 Sequence Alignment:
 
@@ -820,7 +766,7 @@ Execution:
 bash
 cd /path/to/direcfilter
 nohup bash filtering.sh > filter.log &
-# Check status: ps -ef | grep filtering.sh
+ Check status: ps -ef | grep filtering.sh
 Output: Filtered alignments directory (e.g., samples_nf_filtered).
 
 Optional: Removing Reference/Unneeded Sequences:
@@ -844,7 +790,7 @@ Execution:
 bash
 cd /path/to/direcstatistic
 nohup bash statistics.sh > statistics.log &
-# Check status: ps -ef | grep statistics.sh
+ Check status: ps -ef | grep statistics.sh
 Output:
 
 sample_summary.txt: Number of loci enriched and average GC content per sample.
@@ -867,7 +813,7 @@ Execution:
 
 bash
 nohup bash concat_loci.sh > concat.log &
-# Check concat.log for progress
+ Check concat.log for progress
 Output: Three concatenated sequence files in different formats: .fas (FASTA), .nex (NEXUS), .phy (PHYLIP). The .phy file is often used for tree building.
 
 2.2 Partitioning by Codon Position
@@ -898,10 +844,10 @@ Download DNA_blocks.txt from the server to partitionfolder.
 Run the Python script locally:
 
 bash
-# Navigate to the folder in your local terminal/command prompt
+ Navigate to the folder in your local terminal/command prompt
 cd path/to/partitionfolder
 python transform_to_raxmlformat.py
-# Follow the prompts: Use 'DNA_blocks.txt' as input and 'DNA_partition.txt' as output.
+ Follow the prompts: Use 'DNA_blocks.txt' as input and 'DNA_partition.txt' as output.
 Upload the newly created DNA_partition.txt file back to the server analysis directory.
 
 2.3 Tree Inference (IQ-TREE)
@@ -926,8 +872,8 @@ Execution:
 bash
 nohup bash iqtree.sh > iqtree.log &
 Output: The main tree file is {prefix}.treefile (e.g., MyGeneTree.treefile). Other files include log, model information, and support values.
-————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-Reference Protocol: Mitochondrial Genome Assembly using GetOrganelle and Subsequent Annotation
+—————————————————————————————————————————————————————————————
+# Mitochondrial Genome Assembly using GetOrganelle and Subsequent Annotation
 1. Purpose and Scope
 This document outlines a standard operating procedure for the de novo assembly of animal mitochondrial (mt) genomes from whole-genome sequencing (WGS) paired-end reads using the get_organelle toolkit, followed by annotation and extraction of specific genes.
 
@@ -972,17 +918,17 @@ The provided Bash script automates the assembly process for multiple samples.
 4.2.1. Script Explanation (assembly_script.sh)
 
 bash
-#!/bin/bash
+!/bin/bash
 
-# Define directory variables
+ Define directory variables
 input_dir="/path/to/trimmed/reads/" # Directory containing input FASTQ files
 output_dir="/path/to/assembly/output/" # Directory for assembly results
 reference_path="/path/to/reference_mt.fasta" # Path to the NCBI reference FASTA
 
-# Create the output directory if it doesn't exist
+ Create the output directory if it doesn't exist
 mkdir -p "$output_dir"
 
-# Loop through all _R1.fq files in the input directory
+ Loop through all _R1.fq files in the input directory
 for r1_file in "$input_dir"*_R1.fq; do
     # Extract the sample base name (assumes naming convention: 'sample_R1.fq')
     sample_name=$(basename "$r1_file" _R1.fq)
@@ -1010,7 +956,7 @@ for r1_file in "$input_dir"*_R1.fq; do
     fi
 done
 
-# Wait for all background processes to finish
+ Wait for all background processes to finish
 wait
 echo "All assembly jobs are complete."
 4.2.2. Key Parameters:
@@ -1079,8 +1025,8 @@ Read Depth: Low coverage of mitochondrial reads may result in incomplete assembl
 Contamination: If the assembly is poor, the sample may have contamination from other species. Consider using --reduce-reads for large datasets or pre-filtering reads with bowtie2 against the reference.
 
 Complexity: For genomes with long repeats, the assembly graph (*.fastg) should be visualized using Bandage to manually check for circularity and potential alternative assemblies.
-——————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-MSMC2 and MSMC-IM Analysis Pipeline Documentation
+—————————————————————————————————————————————————————————
+# MSMC2 and MSMC-IM Analysis Pipeline Documentation
 
 1. Data Preparation: Generating Mask and VCF Files from BAM Files
 
@@ -1090,26 +1036,25 @@ This section describes how to generate per-chromosome mask files and VCF files f
 The average depth is required for generating the sample-specific mask. While the example uses chr1, this should be done for each chromosome (chr1, chr2, ..., chrN) in a loop for each sample's BAM file.
 
 bash
-# Example for chromosome 1 of a sample
+Example for chromosome 1 of a sample
 samtools depth -r chr1 <sample.bam> | awk '{sum += $3} END {print sum / NR}'
-# Replace <sample.bam> with the path to your BAM file.
-# The output is the mean coverage (depth) for chr1.
+Replace <sample.bam> with the path to your BAM file.The output is the mean coverage (depth) for chr1.
 1.2. Generate Sample Mask and VCF Files
 Using the mean coverage value calculated in the previous step, generate a mask file (in BED format) and a VCF file for each chromosome of each sample. The bamCaller.py script (part of the msmctools utilities) is used for this purpose.
 
 bash
-# Example command for a single chromosome (e.g., chr1) of a single sample
+Example command for a single chromosome (e.g., chr1) of a single sample
 bcftools mpileup -C 50 -u -r chr1 -f <reference_genome.fa> <sample.bam> --threads 16 | \
 bcftools call -c -V indels --threads 16 | \
 ./bamCaller.py <mean_coverage> <sample_chr1_mask.bed.gz> | \
 bgzip -c > <sample_chr1.vcf.gz>
 
-# Replace the placeholders:
-# <reference_genome.fa>: Path to your reference genome FASTA file.
-# <sample.bam>: Path to the input BAM file for the sample.
-# <mean_coverage>: The average depth calculated for this chromosome and sample.
-# <sample_chr1_mask.bed.gz>: Output path for the sample's mask file for chr1 (gzipped).
-# <sample_chr1.vcf.gz>: Output path for the sample's VCF file for chr1 (gzipped).
+Replace the placeholders:
+<reference_genome.fa>: Path to your reference genome FASTA file.
+<sample.bam>: Path to the input BAM file for the sample.
+<mean_coverage>: The average depth calculated for this chromosome and sample.
+<sample_chr1_mask.bed.gz>: Output path for the sample's mask file for chr1 (gzipped).
+<sample_chr1.vcf.gz>: Output path for the sample's VCF file for chr1 (gzipped).
 Note: This process must be repeated for each chromosome and for each of the four samples, resulting in files like sample1_chr1.vcf.gz, sample1_chr1_mask.bed.gz, sample2_chr1.vcf.gz, etc.
 
 2. Generating the Genome Mappability Mask
@@ -1120,27 +1065,25 @@ A general mappability mask for the reference genome is also required to exclude 
 This script (often part of the MSMC tools ecosystem) processes the reference genome to identify mappable regions.
 
 bash
-# Assuming run_snpable2.sh is in your path or current directory
+Assuming run_snpable2.sh is in your path or current directory
 ./run_snpable2.sh <reference_genome.fa>
-# This will generate output files used in the next step.
+This will generate output files used in the next step.
 2.2. Process with makeMappabilityMask.py
 This Python script converts the output from run_snpable2.sh into the mask format required by MSMC.
 
 bash
-# Example command
+Example command
 python makeMappabilityMask.py <output_from_snpable> > <genome_mask.bed>
-# Replace <output_from_snpable> with the relevant file generated by run_snpable2.sh (often a .mask file).
-# Replace <genome_mask.bed> with the desired output file name for the genome-wide mask.
-# This genome mask must also be split by chromosome for use in step 3.
+Replace <output_from_snpable> with the relevant file generated by run_snpable2.sh (often a .mask file).
+Replace <genome_mask.bed> with the desired output file name for the genome-wide mask.This genome mask must also be split by chromosome for use in step 3.
 3. Phasing VCFs with WhatsHap
 
 Phase the per-chromosome VCF files for each sample using WhatsHap to improve haplotype resolution for MSMC2.
 
 bash
-# Example command for a single chromosome of a single sample
+Example command for a single chromosome of a single sample
 whatshap phase --output <phased_sample_chr1.vcf.gz> --reference <reference_genome.fa> <sample_chr1.vcf.gz> <sample.bam>
-# Replace <phased_sample_chr1.vcf.gz> with the desired output name for the phased VCF.
-# The original <sample_chr1.vcf.gz> and <sample.bam> are used as inputs.
+Replace <phased_sample_chr1.vcf.gz> with the desired output name for the phased VCF. The original <sample_chr1.vcf.gz> and <sample.bam> are used as inputs.
 Note: Repeat this for all chromosomes and all four samples. The phased VCFs (phased_*.vcf.gz) will be used as input for the next step.
 
 4. Preparing MSMC2 Input Files
@@ -1148,7 +1091,7 @@ Note: Repeat this for all chromosomes and all four samples. The phased VCFs (pha
 MSMC2 requires a specific input format (multihetsep). The generate_multihetsep.py script combines the sample masks, the genome mappability mask, and the phased VCFs to create this input for each chromosome.
 
 bash
-# Example command for chromosome 1
+Example command for chromosome 1
 generate_multihetsep.py --chr chr1 \
     --mask sample1_chr1_mask.bed.gz \
     --mask sample2_chr1_mask.bed.gz \
@@ -1170,11 +1113,11 @@ MSMC2 is run twice: once for analysis within a species/population ("within") and
 This command runs MSMC2 on haplotypes from the same species (e.g., two individuals from Species 1). The -I flag specifies which haplotypes to use (0,1 = first two haplotypes; 2,3 = next two, etc.).
 
 bash
-# Example for Species 1 (using haplotypes 0 and 1 from the input)
+Example for Species 1 (using haplotypes 0 and 1 from the input)
 msmc2 -I 0,1 -o species1_msmc2 chr1.multihetsep.txt chr2.multihetsep.txt chr3.multihetsep.txt ...
-# The input files are all the chromosome-specific multihetsep files.
+The input files are all the chromosome-specific multihetsep files.
 
-# Example for Species 2 (using haplotypes 2 and 3)
+Example for Species 2 (using haplotypes 2 and 3)
 msmc2 -I 2,3 -o species2_msmc2 chr1.multihetsep.txt chr2.multihetsep.txt chr3.multihetsep.txt ...
 5.2. Cross-Species Analysis
 This command runs MSMC2 on all possible pairs of haplotypes between the two species. The -I flag defines the cross-haplotype pairs (0-2, 0-3, 1-2, 1-3).
@@ -1187,7 +1130,7 @@ The combineCrossCoal.py script combines the output from the within and cross ana
 
 bash
 python combineCrossCoal.py cross_species_msmc2.final.txt species1_msmc2.final.txt species2_msmc2.final.txt > combined_crosspecies.msmc2.final.txt
-# Replace the .final.txt filenames with the actual outputs from your MSMC2 runs.
+Replace the .final.txt filenames with the actual outputs from your MSMC2 runs.
 7. Running MSMC-IM
 
 Finally, run MSMC-IM using the combined file to infer isolation and migration history.
@@ -1201,8 +1144,8 @@ python MSMC_IM.py \
     --plotfittingdetails \
     --xlog \           # Plot time axis on a logarithmic scale
     combined_crosspecies.msmc2.final.txt
-——————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-FastSimCoal (fsc) Automation Tool Documentation
+—————————————————————————————————————————————————————————————————————————————————————
+# FastSimCoal (fsc) Automation Tool Documentation
 Overview
 This documentation describes two complementary scripts that automate running FastSimCoal (fsc) multiple times and selecting the best run based on maximum likelihood values.
 
@@ -1314,8 +1257,8 @@ The number of cores (-c) and bootstrap replicates (-B) are set to 15
 The number of runs is fixed at 100 but can be modified in the Python script
 
 Ensure you have appropriate permissions to execute scripts and create directories
-——————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-Population Genetic Analysis Pipeline: Fst, Dxy, and Pi using pixy and CMplot
+———————————————————————————————————————————————————————————————=
+# Population Genetic Analysis Pipeline: Fst, Dxy, and Pi using pixy and CMplot
 1. Overview
 This pipeline calculates key population genetics statistics—Fst (genetic differentiation), Dxy (absolute genetic divergence), and Pi (nucleotide diversity)—from a VCF file using the pixy software. The raw output from pixy is then processed by custom Python scripts to clean, split, and format the data, preparing it for final visualization using the CMplot package in R to generate Manhattan-style plots.
 
@@ -1366,7 +1309,7 @@ Usage:
 
 bash
 python Fst_Dxy_1st.py
-# Then enter the path to your file, e.g., `pixy_results_fst.txt`
+Then enter the path to your file, e.g., `pixy_results_fst.txt`
 Output: A directory (split_fst_files/) containing individual files for each population pair (e.g., popA_popB_fst.txt, popA_popC_fst.txt).
 
 3.2. Script 2: Fst_Dxy_2nd.py (for Fst and Dxy data)
@@ -1426,13 +1369,13 @@ The final step is to create Manhattan plots to visualize the distribution of the
 R Code Example (for Pi):
 
 r
-# Load the CMplot library
+Load the CMplot library
 library(CMplot)
 
-# Read the formatted data
+Read the formatted data
 pi_data <- read.table("popA_pi_CMplot.txt", header = TRUE)
 
-# Generate a Manhattan plot
+Generate a Manhattan plot
 CMplot(pi_data,
        type = "p",           # Type of plot: "p" for points
        plot.type = "m",      # Plot type: "m" for Manhattan
