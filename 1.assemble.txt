@@ -1,0 +1,257 @@
+Chromosome-Level Genome Assembly Using Docker
+
+1. Basic Commands
+
+$ docker image ls # List all available Docker images
+
+$ docker ps # List all running containers
+
+$ docker ps -a # List all containers (both running and stopped)
+
+$ exit # Exit the current container shell
+
+2. Creating a New Container
+
+$ docker run --gpus all --name your_name_assemble -idt centos:centos7 /bin/bash # Create a new container with GPU support
+
+--name Assign a name to the container for easier management
+
+$ docker exec -it your_name_assemble /bin/bash # Open an interactive shell inside a running container
+
+$ docker start your_name_assemble # Start a stopped container
+
+$ docker stop your_name_assemble # Stop a running container
+
+3. Transferring Data
+
+$ docker cp your_name_assemble:/root/test.text /home/vagrant/test.txt # Copy a file from the Docker container to the host machine
+
+$ docker cp /home/vagrant/test.txt your_name_assemble:/root/test.text # Copy a file from the host machine into the Docker container
+
+Note: Within the Docker environment, it is recommended to store data in the /data directory.
+
+4. Running NextDenovo for Assembly
+4.0. Estimate Genome Size (Execute this on the host system, NOT inside the Docker container)
+
+$ jellyfish count -m 21 -s 20G -t 30 -o 21mer_out -C <(zcat sample1_1.fq.gz) <(zcat sample1_2.fq.gz) # Count k-mers in the sequencing files
+
+-m K-mer length
+
+-t Number of threads to use
+
+-o Output file prefix
+
+-C Count canonical k-mers (consider both strands)
+
+The syntax < (zcat *.fq.gz) streams decompressed FASTQ files directly into Jellyfish.
+
+$ jellyfish histo -o 21mer_out.histo 21mer_out # Generate a k-mer frequency histogram
+
+$ /home/software/genomescope2.0/genomescope.R -i 21mer_out.histo -o 21mer_out_plot -k 21 # Estimate genome size and heterozygosity, and generate plots
+
+-o Output directory; the primary visualization is typically named linear_plot.png
+
+4.1. Obtain the full path to the sequencing data
+
+$ realpath seq.fq
+
+4.2. Create an input file of sequence paths (FOFN)
+
+$ touch input_seq.txt
+
+$ vi input_seq.txt
+
+Add the full path obtained in step 4.1 to this file and save.
+
+4.3. Configure the run.cfg file (Copy a template from /home/software/NextDenovo/test_data/run.cfg to your working directory)
+
+$ vi run.cfg
+
+Modify the following key parameters:
+
+input_fofn = # Full path to the input_seq.txt file
+
+workdir = /data/1_assemble # Full path for the working directory
+
+genome_size = # Estimated genome size (obtained from Jellyfish/GenomeScope)
+
+parallel_jobs = # Number of parallel jobs to run (each uses 8 threads; typically set between 5-10)
+
+4.4. Execute NextDenovo
+
+$ /home/software/NextDenovo/nextDenovo run.cfg
+
+4.5. Locate the assembly result
+
+The primary assembly output file is: /data/01_assemble/03.ctg_graph/nd.asm.fasta
+
+5. Running NextPolish for Error Correction
+5.1. Prepare the Short-Read (NGS) data paths file
+
+$ realpath seq_1.fq >> sgs.fofn && realpath seq_2.fq >> sgs.fofn
+
+5.2. Configure the run.cfg file (Copy a template from /home/software/NextPolish/test_data/run.cfg)
+
+Modify the following lines marked as crucial:
+
+text
+[General]
+job_type = local
+job_prefix = nextPolish
+task = best
+rewrite = yes
+rerun = 3
+parallel_jobs = 6                           # Number of parallel jobs (5-10)
+multithread_jobs = 5
+genome = ./raw.genome.fasta                 # Input genome file (from step 4.5)
+genome_size = auto
+workdir = ./01_rundir                       # Output directory for this run
+polish_options = -p {multithread_jobs}
+
+[sgs_option]
+sgs_fofn = ./sgs.fofn                       # Path to the FOFN created in step 5.1
+sgs_options = -max_depth 100 -bwa
+5.3. Execute NextPolish
+
+$ /home/software/NextPolish/nextPolish run.cfg
+
+The polished genome will be located in the 01_rundir directory: genome.nextpolish.fasta
+
+6. Purge Haplotigs for Haplotypic Purification
+6.1. Step 1: Generate initial histograms
+
+$ conda activate purgehap # Switch to the appropriate Conda environment
+
+$ /home/software/purge_hap/purge_haplogs1.sh run_path refGenome.fa nanopore_reads.fq threads_num
+
+run_path # Path to a new directory for this analysis
+
+refGenome.fa # Path to the assembled genome (polished or unpolished)
+
+nanopore_reads.fq # Path to the uncompressed Nanopore long reads
+
+threads_num # Number of threads to use (e.g., 30)
+
+6.2. Determine parameters from the histogram
+
+A PNG histogram plot will be generated in the run directory.
+
+Identify the two main peaks and determine the following three values from the plot (depth is on the X-axis):
+
+LowCutOff # Depth value at the left boundary of the left peak
+
+MidPoint # Depth value at the midpoint (valley) between the two peaks
+
+HighCutOff # Depth value at the right boundary of the right peak
+
+6.3. Step 2: Run the main purification and cleanup
+
+$ /home/software/purge_hap/purge_haplogs2.sh run_path refGenome.fa nanopore_reads.fq threads_num LowCutOff MidPoint HighCutOff
+
+The last three parameters are from step 6.2; others remain the same as in 6.1.
+$ conda activate base # Switch back to the base Conda environment
+
+7. HiC-Pro Data QC (Optional - Can be skipped if high-quality Hi-C data is available)
+Requires an assembled genome and Hi-C sequencing data.
+7.1. File Preparation
+
+$ mkdir reference && cp genome.fa ./reference && cd reference # Create a reference directory and copy the genome
+
+$ bowtie2-build -f genome.fa genome_idx # Build a Bowtie2 index for the genome
+
+$ digest_genome.py genome.fa -r dpnii -o genome_DpnII.bed # Generate a BED file of restriction fragment sites (for DpnII)
+
+$ samtools faidx genome.fa # Index the genome
+
+$ awk '{print $1 "\t" $2}' genome.fa.fai > genome.chrom.sizes # Create a chromosome sizes file
+
+Create the input directory structure:
+
+text
+InputPath/
+├── sample1
+│   ├── sample1_R1.fastq.gz
+│   └── sample1_R2.fastq.gz
+└── sample2
+    ├── sample2_R1.fastq.gz
+    └── sample2_R2.fastq.gz
+Filenames must end with _R1.fastq.gz / _R2.fastq.gz.
+
+7.2. Modify the config-hicpro.txt file
+
+$ cp /home/software/HiC-Pro-master/config-hicpro.txt ./ # Copy the config template
+
+Edit the following parameters:
+
+N_CPU # Number of CPUs/threads to use
+
+BOWTIE2_IDX_PATH # Path to the directory containing the Bowtie2 index (just the directory path)
+
+REFERENCE_GENOME # Basename of the Bowtie2 index (e.g., genome_idx, without path or extension)
+
+GENOME_SIZE # Path to the genome.chrom.sizes file
+
+GENOME_FRAGMENT # Path to the restriction fragment BED file (genome_DpnII.bed)
+
+LIGATION_SITE # Ligation junction sequence (for DpnII: GATCGATC)
+
+JOB_MEM # Memory allocation per job (e.g., 100GB)
+
+7.3. Run HiC-Pro
+
+$ HiC-Pro -c config-hicpro.txt -i InputPath -o Output_Directory_HiCPro
+
+7.4. Interpreting Results
+
+Key result PDFs are found in: Output_Directory_HiCPro/hic_results/pictures/
+
+*Fragment* statistics:
+
+Valid_interaction_pairs should be > 90%. Higher is better.
+
+*ContactRanges* statistics:
+
+Valid Interactions should be > 80%.
+
+Cis long-range contacts should be > 40%.
+
+8. 3D-DNA for Chromosome Scaffolding
+8.1. File Preparation (Note: Corrected section number from 5.1 to 8.1)
+
+$ mkdir fastq && cp reads_R1.fastq.gz reads_R2.fastq.gz ./fastq # Create dir and copy Hi-C FASTQs
+
+$ mkdir reference && cp genome.fa ./reference && cd reference # Create reference dir and copy genome
+
+$ bwa index genome.fa # Build a BWA index for the genome
+
+$ python /home/software/juicer/misc/generate_site_positions.py DpnII genome genome.fa # Generate DpnII site info file (genome_DpnII.txt)
+
+$ awk 'BEGIN{OFS="\t"}{print $1, $NF}' genome_DpnII.txt > genome.chrom.sizes # Create chromosome sizes file from site info
+
+8.2. Run Juicer
+
+$ nohup /home/software/juicer/scripts/juicer.sh \
+
+-g genome \ # Genome name (prefix for output files)
+
+-s DpnII \ # Restriction enzyme used
+
+-t 40 \ # Number of threads to use
+
+-D /home/software/juicer \ # Path to the Juicer directory
+
+-z reference/genome.fa \ # Path to the reference genome FASTA
+
+-y reference/genome_DpnII.txt \ # Path to the restriction site file
+
+-p reference/genome.chrom.sizes \ # Path to the chromosome sizes file
+
+&> juicer.log & # Run in background, redirecting output to juicer.log
+
+The file aligned/merged_nodups.txt is the main output needed for the next step.
+
+8.3. Run 3D-DNA
+
+$ nohup /home/software/3d-dna-master/run-asm-pipeline.sh -r 3 reference/genome.fa aligned/merged_nodups.txt &> 3d.log &
+
+This will generate chromosome-scale scaffolds.

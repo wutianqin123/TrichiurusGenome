@@ -1,0 +1,232 @@
+Genome Annotation Workflow using MAKER (with Docker)
+This document outlines the steps for de novo genome annotation using the MAKER pipeline, including preparatory steps for repeat masking and transcriptome assembly, all within Docker containers for reproducibility.
+
+Prerequisites before running MAKER
+1. Obtaining and Preparing a Protein Database from Related Species
+Search databases like NCBI RefSeq or Ensembl using the taxonomic group of your target species.
+
+Download available protein sequences and merge them into a single file.
+
+Remove identical duplicate protein sequences using the script rm_dump_by_fa_seq.py.
+
+Example command (adjust paths): python /path/to/rm_dump_by_fa_seq.py -i merged_proteins.fa -o protein.fasta
+
+The final cleaned protein database should be named protein.fasta.
+
+2. Building and Filtering a De Novo Repeat Database with RepeatModeler
+This step is performed in a dedicated Docker container.
+
+2.0 Container Setup and Data Transfer
+
+bash
+# a. Create a container named 'your_name_rep' from the 'repeat:v1' image
+docker run --name your_name_rep -idt repeat:v1 /bin/bash
+
+# b. Copy your genome assembly into the container's /data directory
+docker cp /path/to/your/genome.fa your_name_rep:/data/
+
+# c. Enter the container
+docker exec -it your_name_rep /bin/bash
+# All following commands (2.1, 2.2) are run INSIDE this container
+2.1 De Novo Repeat Library Construction
+
+bash
+# Navigate to the data directory (if not already there)
+cd /data
+
+# Build a database for RepeatModeler
+BuildDatabase -name your_genome_db -engine ncbi genome.fa
+
+# Run RepeatModeler to identify repeats (-pa: number of parallel processes)
+RepeatModeler -pa 4 -database your_genome_db -engine ncbi -LTRStruct
+
+# (Optional) Mask the genome using the newly found repeats
+# RepeatMasker -e ncbi -pa 20 -lib RM_*/consensi.fa.classified -dir . genome.fa
+The primary output file is RM_.../consensi.fa.classified.
+
+2.2 (Optional) Filtering the Repeat Library
+This step removes repeats that might be real genes by blasting them against the protein database.
+
+bash
+# Make sure your protein.fasta is also in /data (e.g., copied via docker cp)
+
+# Create a BLAST database from your protein.fasta
+makeblastdb -dbtype prot -in protein.fasta -out protein_db
+
+# BLAST the repeats against the protein database
+blastx -query RM_*/consensi.fa.classified -db protein_db -outfmt 6 -evalue 1e-5 -num_threads 20 -out repeats_vs_protein.blast
+
+# Filter the repeat library: removes repeats with significant hits to proteins
+python /path/to/Del_seq_in_blast.py -q RM_*/consensi.fa.classified -blast repeats_vs_protein.blast -l 30 -o filtered_repDB
+The final repeat library is either the original consensi.fa.classified or the filtered filtered_repDB_accept.fa.
+
+2.3 Extract Data and Clean Up Container
+
+bash
+# While still inside the container, find the full path to your final repeat library
+realpath filtered_repDB_accept.fa  # or consensi.fa.classified
+# Example output: /data/filtered_repeats.fa
+
+# Exit the container
+exit
+
+# Now on the host machine, copy the final repeat library out
+docker cp your_name_rep:/data/filtered_repeats.fa /path/on/your/host/
+
+# Stop and remove the container
+docker stop your_name_rep
+docker rm your_name_rep
+MAKER Run Preparation
+a. Create MAKER Container
+
+bash
+docker run --name your_name_maker -idt maker_image:tag /bin/bash
+# Replace 'maker_image:tag' with the actual name of your MAKER Docker image
+b. Copy All Necessary Data into the Container
+
+bash
+# Copy genome, protein DB, repeat DB, and RNA-Seq reads
+docker cp /host/path/to/genome.fa your_name_maker:/data/
+docker cp /host/path/to/protein.fasta your_name_maker:/data/
+docker cp /host/path/to/filtered_repeats.fa your_name_maker:/data/ # From step 2.3
+docker cp /host/path/to/RNA-Seq/sample1_R1.fq your_name_maker:/data/
+docker cp /host/path/to/RNA-Seq/sample1_R2.fq your_name_maker:/data/
+c. Enter the MAKER Container
+
+bash
+docker exec -it your_name_maker /bin/bash
+NOTE: All subsequent operations are performed INSIDE the your_name_maker container.
+
+3. Transcriptome Assembly and Processing
+3.1 Genome-Guided Transcriptome Assembly with Trinity
+Perform this for each RNA-Seq sample/library, in separate directories if multiple exist.
+
+bash
+# Index the genome for read alignment
+bwa index genome.fa
+
+# Align RNA-Seq reads to the genome and sort the BAM file
+bwa mem -t 15 genome.fa sample1_R1.fq sample1_R2.fq | samtools sort -@ 10 -m 4G -O bam -o sample1.sorted.bam -
+
+# Assemble transcripts using the genome-guided approach
+Trinity --genome_guided_bam sample1.sorted.bam --max_memory 50G --genome_guided_max_intron 10000 --CPU 6
+The main assembly output is trinity_out_dir/Trinity-GG.fasta.
+
+3.2 Deduplication of Assembled Transcripts
+
+bash
+# If you have multiple assemblies, concatenate them first
+cat trinity_out_dir1/Trinity-GG.fasta trinity_out_dir2/Trinity-GG.fasta > all_trinity_assembled.fasta
+
+# Use CD-HIT-EST to cluster transcripts at 95% identity
+cd-hit-est -i all_trinity_assembled.fasta -o all_trinity_95.fasta -c 0.95 -n 10 -d 0 -M 32000 -T 20
+The final EST evidence file for MAKER is all_trinity_95.fasta.
+
+Running MAKER
+The MAKER pipeline is run iteratively to improve annotation quality.
+
+4. MAKER - Run 1 (Initial Annotation)
+4.1 Configure MAKER
+
+bash
+# Use the control script to generate configuration files
+python /home/tools/MAKER_ctl_create.py -run_type 1 -g genome.fa -pep protein.fasta -est all_trinity_95.fasta -rep filtered_repeats.fa -augustus_species zebrafish
+-augustus_species: Critical parameter. Use a species from the Augustus library that is phylogenetically close to your target species.
+
+zebrafish (fish), chicken (birds), fly (diptera), human (mammals) are common examples.
+
+Optimization Note (maker_opts.ctl):
+
+The pred_flank value controls how much genomic sequence flanking a gene prediction is considered. Adjust based on genome size to prevent fragmented or merged genes:
+
+100MB - 500MB: pred_flank=80~100
+
+500MB - 1.5GB: pred_flank=100~300
+
+1.5GB: pred_flank>300
+
+This parameter should be changed consistently in maker_opts.ctl for Run 2 and Run 3 if adjusted here.
+
+4.2 Execute MAKER Run 1
+
+bash
+# Run MAKER using the generated control file. Adjust paths for -o (output) and -opt (ctl file directory).
+nohup python3 /home/tools/MAKER_multrun.py -g genome.fa -o /data/run1 -opt /data/ -p 30 1> /data/run1/maker_run1.log 2>&1 &
+The main output GFF file is /data/run1/all.gff. This is used for training in the next step.
+
+5. MAKER - Run 2 (Annotation with Trained Ab Initio Predictors)
+5.1 Train Augustus
+
+5.1.1 Extract Training Sequences
+Uses the GFF from Run 1 (all.gff) to get genomic sequences around predicted genes.
+
+bash
+samtools faidx genome.fa # Ensure index exists
+# Extract regions around mRNA features, extending 1000bp upstream/downstream
+awk -v OFS="\t" '{ if ($3 == "mRNA") print $1, $4, $5 }' /data/run1/all.gff | awk -v OFS="\t" '{ if ($2 < 1000) print $1, "0", $3+1000; else print $1, $2-1000, $3+1000 }' | bedtools getfasta -fi genome.fa -bed - -fo augustus_training_data.fa
+5.1.2 Train Augustus using BUSCO
+
+bash
+# Run BUSCO in genome mode on the training sequences to optimize Augustus parameters
+nohup /home/software/busco/bin/busco -i augustus_training_data.fa -o target_species_busco -l /home/software/busco/odb10/actinopterygii_odb10/ -m genome -c 20 --long --augustus_species zebrafish --augustus_parameters='--progress=true' 1> busco.log 2>&1 &
+
+# Copy the newly created species profile to Augustus's config directory
+cp -r target_species_busco/run_/augustus_output/retraining_parameters/BUSCO_target_species_busco $AUGUSTUS_CONFIG_PATH/species/
+# The new species name for MAKER is 'BUSCO_target_species_busco'
+-l: Choose the appropriate BUSCO database lineage (actinopterygii_odb10, diptera_odb10, insecta_odb10, vertebrata_odb10).
+
+5.2 Train SNAP
+Uses the GFF from Run 1 to train the SNAP gene predictor.
+
+bash
+mkdir snap && cd snap
+maker2zff -c 0.8 -e 0.8 -o 0.8 -x 0.2 /data/run1/all.gff
+fathom -categorize 1000 genome.ann genome.dna
+fathom -export 1000 -plus uni.ann uni.dna
+mkdir params && cd params
+forge ../export.ann ../export.dna
+cd ../
+hmm-assembler.pl genome params > genome.hmm
+The final SNAP HMM model is snap/genome.hmm.
+
+5.3 Configure MAKER for Run 2
+
+bash
+# Configure for the second run, providing the new models and the previous annotation
+python /home/tools/MAKER_ctl_create.py -run_type 2 -g genome.fa -reanno_gff /data/run1/all.gff -augustus_new BUSCO_target_species_busco -snap_hmm /data/snap/genome.hmm
+# Note: '-augustus_new' takes the name, not the path. '-snap_hmm' takes the full path.
+5.4 Execute MAKER Run 2
+
+bash
+nohup python3 /home/tools/MAKER_multrun.py -g genome.fa -o /data/run2 -opt /data/ -p 30 1> /data/run2/maker_run2.log 2>&1 &
+The output GFF file is /data/run2/all.gff.
+
+6. MAKER - Run 3 (Final Annotation)
+6.1 Configure MAKER for Run 3
+
+bash
+# Final run uses all evidence and the trained ab initio predictors
+python /home/tools/MAKER_ctl_create.py -run_type 3 -g genome.fa -reanno_gff /data/run2/all.gff -augustus_new BUSCO_target_species_busco -snap_hmm /data/snap/genome.hmm -pep protein.fasta -est all_trinity_95.fasta -rep filtered_repeats.fa
+6.2 Execute MAKER Run 3
+
+bash
+nohup python3 /home/tools/MAKER_multrun.py -g genome.fa -o /data/run3 -opt /data/ -p 30 1> /data/run3/maker_run3.log 2>&1 &
+The final annotation file is /data/run3/all.gff.
+
+Post-MAKER Processing
+6.3 Filtering the Final GFF
+
+bash
+# Use a script to clean the MAKER GFF file (e.g., remove non-gene features, select best models)
+python3 /home/tools/gff_filter_fromMAKER.py -i /data/run3/all.gff -o /data/run3/final_annotation_filtered.gff
+6.4 Extract Sequences
+
+bash
+# Use gffread to extract CDS and protein sequences from the filtered GFF
+gffread /data/run3/final_annotation_filtered.gff -g genome.fa -x final_annotation.cds -y final_annotation.pep
+6.5 Functional Annotation with InterProScan
+
+bash
+# Annotate the predicted protein sequences
+# Ensure InterProScan is initialized first if it's a new installation
+/home/software/interproscan/interproscan.sh -i final_annotation.pep -iprlookup -goterms -cpu 20 -t p -f tsv -o final_annotation_interpro.tsv
